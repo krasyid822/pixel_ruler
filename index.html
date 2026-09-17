@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Buka gambar, arahkan kursor untuk koordinat pixel, pilih-tarik untuk mengukur area.">
+<meta name="theme-color" content="#2e62ff">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PixelRuler">
+<title>Pixel Ruler — Koordinat Gambar</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1e2228;
+    --panel-2: #262b33;
+    --border: #363c46;
+    --text: #e6e9ef;
+    --muted: #9aa3b0;
+    --accent: #4c8dff;
+    --accent-2: #2e62ff;
+    --selected-fill: rgba(76, 141, 255, 0.18);
+    --selected-stroke: #4c8dff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Geist", "Segoe UI", system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+  }
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  /* ---- Topbar ---- */
+  #topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #logo {
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.02em;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  #logo .dot { color: var(--accent); }
+  .btn {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    user-select: none;
+  }
+  .btn:hover { background: #2d3340; border-color: #46505e; }
+  .btn:active { background: #333a49; }
+  .btn.primary { background: var(--accent-2); border-color: var(--accent-2); }
+  .btn.primary:hover { background: #3a6ef0; }
+  .separator { width: 1px; height: 22px; background: var(--border); flex-shrink: 0; }
+  .hint {
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ---- Main ---- */
+  #main {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background:
+      linear-gradient(45deg, #171a1f 25%, transparent 25%),
+      linear-gradient(-45deg, #171a1f 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #171a1f 75%),
+      linear-gradient(-45deg, transparent 75%, #171a1f 75%),
+      #1a1d23;
+    background-size: 20px 20px;
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  }
+  #stage {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  #wrap {
+    position: relative;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.55);
+    display: none;
+  }
+  #wrap.zoom { cursor: grab; }
+  #wrap.dragging { cursor: grabbing; }
+
+  /* Toast copy feedback */
+  #toast {
+    position: fixed;
+    bottom: 46px;
+    left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    background: #2e62ff;
+    color: #fff;
+    font: 600 12px/1 "Geist Mono", ui-monospace, monospace;
+    padding: 8px 16px;
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s, transform 0.18s;
+    z-index: 100;
+    white-space: pre;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  /* Coordinate overlay (happens at zoom offset) */
+  #coords {
+    position: absolute;
+    pointer-events: none;
+    font: 600 12px/1.2 "Geist Mono", ui-monospace, "SF Mono", monospace;
+    color: #fff;
+    background: rgba(20, 24, 30, 0.85);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 6px;
+    padding: 3px 6px;
+    white-space: nowrap;
+    display: none;
+  }
+
+  /* Selection rectangle + info */
+  #sel {
+    position: absolute;
+    border: 1.5px solid var(--selected-stroke);
+    background: var(--selected-fill);
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08);
+    display: none;
+    z-index: 3;
+  }
+  #selInfo {
+    position: absolute;
+    top: -34px;
+    left: 0;
+    transform: translateX(-50%);
+    background: rgba(20, 24, 30, 0.92);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font: 600 11px/1.2 "Geist Mono", ui-monospace, monospace;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  #selInfo b { color: #fff; }
+  #selSize {
+    position: absolute;
+    bottom: -24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(20,24,30,0.92);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font: 600 11px/1.2 "Geist Mono", monospace;
+    color: #cfe0ff;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  #crosshair {
+    position: absolute;
+    pointer-events: none;
+    z-index: 2;
+    display: none;
+  }
+  #chX, #chY {
+    position: absolute;
+    background: rgba(76,141,255,0.25);
+  }
+
+  /* Empty state */
+  #empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    color: var(--muted);
+    text-align: center;
+    padding: 20px;
+  }
+  #empty .icon {
+    width: 64px; height: 64px;
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; color: #5b6472;
+  }
+  #empty .big { font-size: 15px; color: var(--text); font-weight: 500; }
+  #empty.drop { background: rgba(46,98,255,0.12); outline: 2px dashed var(--accent); outline-offset: -8px; }
+  #empty.drop .icon { border-color: var(--accent); color: var(--accent); }
+
+  /* Status bar */
+  #status {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 6px 14px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    font: 500 12px/1 "Geist Mono", ui-monospace, monospace;
+    color: var(--muted);
+    flex-shrink: 0;
+    user-select: none;
+  }
+  #status span b { color: var(--text); font-weight: 600; }
+  #status .sep { color: var(--border); }
+  #status .cursor-pos { color: #e6e9ef; }
+  #status .sel-pos { color: var(--accent); }
+
+  /* Zoom dialog */
+  dialog {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    width: 320px;
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.5); }
+  dialog h3 { margin: 0 0 12px; font-size: 14px; }
+  dialog .row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; }
+  dialog .row span { color: var(--muted); font-size: 12px; }
+  dialog .row b { font-family: monospace; }
+  dialog input[type=range] { width: 100%; accent-color: var(--accent); }
+  dialog .actions { margin-top: 14px; display: flex; justify-content: flex-end; gap: 8px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div id="logo">Pixel<span class="dot">Ruler</span></div>
+    <button class="btn primary" id="btnOpen">Buka Gambar…</button>
+    <button class="btn" id="btnZoom">Zoom: 100%</button>
+    <button class="btn" id="btnFit">Fit</button>
+    <button class="btn" id="btnCopy">Salin Koordinat</button>
+    <div class="separator"></div>
+    <div class="hint" id="fileInfo">Belum ada gambar</div>
+    <input type="file" id="file" accept="image/*" hidden>
+  </div>
+
+  <div id="main">
+    <div id="stage">
+      <div id="wrap">
+        <img id="img" alt="" draggable="false">
+        <div id="crosshair"><div id="chX"></div><div id="chY"></div></div>
+        <div id="sel">
+          <div id="selInfo"></div>
+          <div id="selSize"></div>
+        </div>
+        <div id="coords"></div>
+      </div>
+      <div id="empty">
+        <div class="icon">&#128444;</div>
+        <div class="big">Klik "Buka Gambar…" atau seret file gambar ke sini</div>
+        <div style="font-size:12px">Arahkan kursor untuk melihat koordinat &middot; klik-tarik untuk memilih area</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="status">
+    <span>Gambar: <b id="stSize">-</b></span>
+    <span class="sep">|</span>
+    <span>Cursor: <span class="cursor-pos" id="stCursor">(-, -)</span></span>
+    <span class="sep">|</span>
+    <span>Seleksi: <span class="sel-pos" id="stSel">-</span></span>
+    <span class="sep" id="sepZoom" style="display:none">|</span>
+    <span id="stZoom" style="display:none"></span>
+    <span style="margin-left:auto">Scroll untuk zoom &middot; klik-tarik untuk seleksi</span>
+  </div>
+</div>
+
+<dialog id="zoomDialog">
+  <h3>Zoom</h3>
+  <div class="row"><span>Skala</span><b id="zoomVal">100%</b></div>
+  <input type="range" id="zoomRange" min="10" max="800" value="100">
+  <div class="actions">
+    <button class="btn" id="zoomCancel">Tutup</button>
+    <button class="btn primary" id="zoomApply">Terapkan</button>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const img = $('img'), wrap = $('wrap'), stage = $('stage'), empty = $('empty');
+  const coords = $('coords'), sel = $('sel'), selInfo = $('selInfo'), selSize = $('selSize');
+  const chX = $('chX'), chY = $('chY');
+  const stCursor = $('stCursor'), stSel = $('stSel'), stSize = $('stSize');
+
+  let scale = 1, baseW = 0, baseH = 0, fitScale = 1;
+  let loaded = false;
+  let imgOffset = { x: 0, y: 0 };   // screen pos of image top-left inside stage
+  let imgSz = { w: 0, h: 0 };       // rendered (scaled) size
+
+  // Selection state
+  let dragging = false, selMode = false;
+  let selStart = null;              // image coords (pixels)
+  let lastCursor = null;            // last hover position (pixels)
+  let lastSel = null;               // last completed selection rect
+
+  function fitAuto() {
+    if (!loaded) return;
+    const pad = 40;
+    const availW = Math.max(50, stage.clientWidth - pad);
+    const availH = Math.max(50, stage.clientHeight - pad);
+    fitScale = Math.min(availW / baseW, availH / baseH);
+    setScale(fitScale, false);
+  }
+
+  function setScale(s, updateRange = true) {
+    scale = s;
+    wrap.style.width = (baseW * scale) + 'px';
+    wrap.style.height = (baseH * scale) + 'px';
+    layout();
+    $('btnZoom').textContent = 'Zoom: ' + Math.round(scale * 100) + '%';
+    if (updateRange) $('zoomRange').value = Math.round(scale * 100);
+  }
+
+  function layout() {
+    if (!loaded) return;
+    const sw = stage.clientWidth, sh = stage.clientHeight;
+    const w = baseW * scale, h = baseH * scale;
+    imgSz = { w, h };
+    imgOffset = { x: (sw - w) / 2, y: (sh - h) / 2 };
+    wrap.style.left = imgOffset.x + 'px';
+    wrap.style.top = imgOffset.y + 'px';
+  }
+
+  // ---- image loading ----
+  function loadFile(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    const url = URL.createObjectURL(file);
+    const clean = () => URL.revokeObjectURL(url);
+    img.onload = () => {
+      baseW = img.naturalWidth;
+      baseH = img.naturalHeight;
+      loaded = true;
+      empty.style.display = 'none';
+      wrap.style.display = 'block';
+      $('fileInfo').textContent = file.name;
+      $('stSize').textContent = baseW + ' × ' + baseH + ' px';
+      fitAuto();
+    };
+    img.onerror = () => { alert('Gagal memuat gambar.'); clean(); };
+    img.src = url;
+  }
+
+  $('btnOpen').addEventListener('click', () => $('file').click());
+  $('file').addEventListener('change', (e) => { loadFile(e.target.files[0]); e.target.value = ''; });
+  $('btnFit').addEventListener('click', fitAuto);
+
+  // drag & drop
+  ['dragenter', 'dragover'].forEach(ev => stage.addEventListener(ev, (e) => {
+    e.preventDefault();
+    empty.classList.add('drop');
+  }));
+  ['dragleave', 'drop'].forEach(ev => stage.addEventListener(ev, (e) => {
+    e.preventDefault();
+    empty.classList.remove('drop');
+  }));
+  stage.addEventListener('drop', (e) => {
+    const f = e.dataTransfer.files[0];
+    if (f) loadFile(f);
+  });
+
+  // ---- coordinate conversion ----
+  function relPos(e) {
+    const r = wrap.getBoundingClientRect();
+    const x = (e.clientX - r.left) / scale;
+    const y = (e.clientY - r.top) / scale;
+    return { x: Math.floor(x), y: Math.floor(y) };
+  }
+
+  function showCoords(e) {
+    if (!loaded) return;
+    const r = wrap.getBoundingClientRect();
+    const sx = e.clientX - r.left;
+    const sy = e.clientY - r.top;
+    const px = Math.floor(sx / scale);
+    const py = Math.floor(sy / scale);
+    const inside = px >= 0 && py >= 0 && px < baseW && py < baseH;
+    if (!inside) { coords.style.display = 'none'; chX.style.display = 'none'; chY.style.display = 'none'; }
+    else {
+      coords.style.display = 'block';
+      coords.textContent = '(' + px + ', ' + py + ')';
+      let cx = sx + 14, cy = sy + 14;
+      if (cx > r.width - 90) cx = sx - 68;
+      if (cy > r.height - 30) cy = sy - 28;
+      coords.style.left = cx + 'px';
+      coords.style.top = cy + 'px';
+      chX.style.display = 'block'; chY.style.display = 'block';
+      chX.style.left = '0'; chX.style.top = sy + 'px';
+      chX.style.width = r.width + 'px'; chX.style.height = '1px';
+      chY.style.left = sx + 'px'; chY.style.top = '0';
+      chY.style.width = '1px'; chY.style.height = r.height + 'px';
+    }
+    stCursor.textContent = inside ? '(' + px + ', ' + py + ')' : '(-, -)';
+    if (inside) lastCursor = { x: px, y: py };
+  }
+
+  function hideCursor() {
+    coords.style.display = 'none';
+    chX.style.display = 'none'; chY.style.display = 'none';
+    stCursor.textContent = '(-, -)';
+  }
+
+  // ---- selection ----
+  function drawSel() {
+    if (!selStart) return;
+    const a = selStart, b = { x: Math.floor(selCur.x), y: Math.floor(selCur.y) };
+    const x1 = Math.min(a.x, b.x), y1 = Math.min(a.y, b.y);
+    const x2 = Math.max(a.x, b.x), y2 = Math.max(a.y, b.y);
+    const w = x2 - x1, h = y2 - y1;
+    sel.style.display = 'block';
+    sel.style.left = x1 * scale + 'px';
+    sel.style.top = y1 * scale + 'px';
+    sel.style.width = w * scale + 'px';
+    sel.style.height = h * scale + 'px';
+    selInfo.innerHTML = '(' + x1 + ', ' + y1 + ') &rarr; (' + x2 + ', ' + y2 + ')';
+    selSize.textContent = w + ' × ' + h + ' px';
+    stSel.textContent = '(' + x1 + ', ' + y1 + ') → (' + x2 + ', ' + y2 + ') · ' + w + ' × ' + h;
+  }
+
+  // Hide selection when dragging image? No — selection IS drag on image.
+  let selCur = null;
+
+  const isZoomAt = () => scale !== fitScale;
+
+  stage.addEventListener('mousedown', (e) => {
+    if (!loaded || e.button !== 0) return;
+    const inside = clickInsideImage(e);
+    if (!inside) return;
+    selMode = true;
+    dragging = true;
+    selStart = relPos(e);
+    selCur = { ...selStart };
+    wrap.classList.add('dragging');
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    showCoords(e);
+    if (!loaded) return;
+    if (dragging) {
+      selCur = clampTo(relPos(e));
+      drawSel();
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (dragging) {
+      selMode = false;
+      dragging = false;
+      wrap.classList.remove('dragging');
+      if (selStart && selCur &&
+          Math.abs(selCur.x - selStart.x) < 1 && Math.abs(selCur.y - selStart.y) < 1) {
+        // tiny click: clear selection
+        clearSel();
+      } else if (selStart && selCur) {
+        const a = selStart, b = { x: Math.floor(selCur.x), y: Math.floor(selCur.y) };
+        lastSel = {
+          x1: Math.min(a.x, b.x), y1: Math.min(a.y, b.y),
+          x2: Math.max(a.x, b.x), y2: Math.max(a.y, b.y),
+        };
+      }
+    }
+  });
+
+  function clearSel() {
+    sel.style.display = 'none';
+    selStart = null; selCur = null;
+    stSel.textContent = '-';
+  }
+
+  function clickInsideImage(e) {
+    const r = wrap.getBoundingClientRect();
+    const p = relPos(e);
+    return p.x >= 0 && p.y >= 0 && p.x < baseW && p.y < baseH;
+  }
+
+  function clampTo(p) {
+    return {
+      x: Math.max(0, Math.min(baseW - 1, p.x)),
+      y: Math.max(0, Math.min(baseH - 1, p.y)),
+    };
+  }
+
+  // ---- clipboard copy ----
+  let toastTimer = null;
+  function showToast(text) {
+    let t = $('toast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'toast';
+      document.body.appendChild(t);
+    }
+    t.textContent = text;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 1500);
+  }
+
+  function copyText(text) {
+    const done = () => showToast('✓ Disalin: ' + text);
+    const fail = () => showToast('Gagal menyalin ke clipboard');
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done).catch((() => fallbackCopy(text, done)));
+    } else {
+      fallbackCopy(text, done);
+    }
+  }
+
+  function fallbackCopy(text, done) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); }
+    catch (e) { showToast('Gagal menyalin ke clipboard'); }
+    document.body.removeChild(ta);
+  }
+
+  function selectionText(s) {
+    const w = s.x2 - s.x1, h = s.y2 - s.y1;
+    return '(x1=' + s.x1 + ', y1=' + s.y1 + ') (x2=' + s.x2 + ', y2=' + s.y2 + ') ukuran=' + w + 'x' + h + 'px';
+  }
+
+  function copyLog() {
+    if (!loaded) return;
+    if (sel.style.display !== 'none' || lastSel) {
+      const s = (function () {
+        if (selStart && selCur) {
+          const a = selStart, b = { x: Math.floor(selCur.x), y: Math.floor(selCur.y) };
+          return { x1: Math.min(a.x, b.x), y1: Math.min(a.y, b.y), x2: Math.max(a.x, b.x), y2: Math.max(a.y, b.y) };
+        }
+        return lastSel;
+      })();
+      copyText(selectionText(s));
+    } else if (lastCursor) {
+      copyText('(' + lastCursor.x + ', ' + lastCursor.y + ')');
+    } else {
+      showToast('Arahkan cursor di atas gambar dulu');
+    }
+  }
+
+  $('btnCopy').addEventListener('click', copyLog);
+
+  // ---- zoom ----
+  stage.addEventListener('wheel', (e) => {
+    if (!loaded) return;
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const r = wrap.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const px = mx / scale, py = my / scale;
+    const next = Math.min(8, Math.max(0.1, scale * factor));
+    scale = next;
+    wrap.style.width = baseW * scale + 'px';
+    wrap.style.height = baseH * scale + 'px';
+    layout();
+    // keep cursor point fixed
+    const r2 = wrap.getBoundingClientRect();
+    wrap.style.left = (imgOffset.x + (px * scale - mx)) + 'px';
+    wrap.style.top = (imgOffset.y + (py * scale - my)) + 'px';
+    // fix offset after manual move
+    const r3 = wrap.getBoundingClientRect();
+    imgOffset = { x: r3.left - stage.getBoundingClientRect().left, y: r3.top - stage.getBoundingClientRect().top };
+    $('btnZoom').textContent = 'Zoom: ' + Math.round(scale * 100) + '%';
+    $('stZoom').style.display = 'inline';
+    $('sepZoom').style.display = 'inline';
+    $('stZoom').textContent = 'Zoom ' + Math.round(scale * 100) + '%';
+    $('zoomRange').value = Math.round(scale * 100);
+  }, { passive: false });
+
+  $('btnZoom').addEventListener('click', () => {
+    $('zoomVal').textContent = Math.round(scale * 100) + '%';
+    $('zoomRange').value = Math.round(scale * 100);
+    $('zoomDialog').showModal();
+  });
+  $('zoomApply').addEventListener('click', () => {
+    setScale($('zoomRange').value / 100);
+    $('zoomDialog').close();
+  });
+  $('zoomCancel').addEventListener('click', () => $('zoomDialog').close());
+
+  // keep status zoom label in sync
+  function syncZoomLabel() { $('stZoom').textContent = 'Zoom ' + Math.round(scale * 100) + '%'; }
+
+  window.addEventListener('resize', () => {
+    if (loaded && scale === fitScale) fitAuto(); else if (loaded) layout();
+  });
+
+  // keyboard: Esc clears selection, Ctrl+C copies, Ctrl+Shift+C copies labeled
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') clearSel();
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+      // only intercept when the app has the focus target (not in file dialog etc.)
+      if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+      e.preventDefault();
+      copyLog();
+    }
+  });
+
+  // ---- service worker (PWA) ----
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch((err) => {
+        console.warn('Service worker gagal didaftarkan:', err);
+      });
+    });
+  }
+})();
+</script>
+</body>
+</html>

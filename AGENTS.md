@@ -14,6 +14,8 @@ titik, atau klik-tarik untuk mengukur area (rectangle) dengan koordinat dan ukur
 | `sw.js` | Service worker; cache-first untuk aset statis, network-first untuk navigasi |
 | `manifest.webmanifest` | Manifest PWA (standalone, ikon 192/512, maskable) |
 | `icons/` | `icon-192.png`, `icon-512.png`, `apple-touch-icon.png` |
+| `coord_mcp.py` | **MCP server lokal** (stdio, Python stdlib) untuk mem-parse data koordinat yang disalin dari aplikasi; terdaftar sebagai `pixel-ruler-coords` di `opencode.json` |
+| `AGENTS.md` | Dokumentasi ini; menjadi konteks untuk agen/MCP |
 
 ### Cara menjalankan
 
@@ -90,3 +92,29 @@ Input: `(x1=10, y1=20) (x2=39, y2=49) ukuran=29x29px`
    tersebut; jangan menambah/mengurangi offset tanpa alasan.
 4. Jika hanya ada titik tanpa ukuran, itu posisi kursor terakhir — bukan seleksi.
 5. Jangan pernah menukar sumbu: `x` horizontal, `y` vertikal (sistem top-down).
+
+## MCP server (coord_mcp.py)
+
+> **Cara memasang MCP server ini di mesin lain** (unduh `coord_mcp.py`, daftarkan
+> di config, verifikasi) → lihat [`instal_mcp.md`](instal_mcp.md).
+
+Proyek ini menyediakan **MCP server lokal** bernama `pixel-ruler-coords`
+(terdaftar di `opencode.json`). Jalankan langsung:
+
+```bash
+python3 coord_mcp.py
+```
+
+Berjalan via stdio (JSON-RPC), tanpa dependensi eksternal. Tool yang disediakan:
+
+| Tool | Deskripsi |
+|------|-----------|
+| `parse_coordinates` | Parse teks koordinat (titik/area) ke objek terstruktur; opsi validasi batas `image_width`/`image_height` |
+| `interpret_area` | Hitung span, luas piksel `(w+1)×(h+1)`, koordinat tengah dari seleksi area |
+
+Contoh panggilan `parse_coordinates`:
+`{"text": "(x1=10, y1=20) (x2=39, y2=49) ukuran=29x29px"}` →
+`{ok:true, data:{kind:"area", x1:10, y1:20, x2:39, y2:49, width:29, height:29, span:[29,29], pixel_count:900, center:{x:24.5, y:34.5}}}`.
+
+Saat data koordinat disalin/di-paste ke percakapan, agen disarankan memanggil
+tool MCP ini (bukan menebak format) agar interpretasi konsisten dengan AGENTS.md.
